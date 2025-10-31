@@ -22,6 +22,10 @@ import { TasksModule } from './tasks/tasks.module';
 import { BadgesModule } from './badges/badges.module';
 import { Badge } from './badges/badge.entity';
 import { UserBadge } from './badges/user-badge.entity';
+import { LobbyModule } from './lobby/lobby.module';
+import { LobbyPosting } from './lobby/lobby-posting.entity';
+import { LobbyResponse } from './lobby/lobby-response.entity';
+
 @Module({
   imports: [
     ScheduleModule.forRoot(),
@@ -40,7 +44,7 @@ import { UserBadge } from './badges/user-badge.entity';
       password: 'postgres', // Docker'da belirlediğin şifre
       database: 'postgres', // Docker'da belirlediğin veritabanı adı (genellikle 'postgres'tir)
 
-      entities: [User, PlayerProfile, Field, Match, MatchParticipant, MatchMvpVote, MatchTagVote, Badge, UserBadge], // Buraya birazdan oluşturacağımız Entity'leri ekleyeceğiz
+      entities: [User, PlayerProfile, Field, Match, MatchParticipant, MatchMvpVote, MatchTagVote, Badge, UserBadge, LobbyPosting, LobbyResponse], // Buraya birazdan oluşturacağımız Entity'leri ekleyeceğiz
       
       // --- GELİŞTİRME İÇİN SİHİRLİ AYAR ---
       // 'synchronize: true' ayarı, TypeORM'ye der ki:
@@ -57,6 +61,7 @@ import { UserBadge } from './badges/user-badge.entity';
     VotesModule,
     TasksModule,
     BadgesModule,
+    LobbyModule,
     // --- VERİTABANI BAĞLANTISI BURADA BİTTİ ---
   ],
   controllers: [AppController],

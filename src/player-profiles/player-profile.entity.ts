@@ -80,6 +80,19 @@ export class PlayerProfile {
   @Column({ type: 'numeric', precision: 5, scale: 2, default: 0.00 })
   no_show_rate: number;
 
+  // --- YENİ EKLENEN KÜMÜLATİF SAYAÇLAR ---
+  
+  @Column({ type: 'int', default: 0 })
+  total_matches_played: number;
+
+  @Column({ type: 'int', default: 0 })
+  total_mvps_won: number;
+
+  @Column({ type: 'int', default: 0 })
+  total_tags_received: number;
+
+  // --- BİTTİ ---
+
   // Bu profil her güncellendiğinde tarihi otomatik olarak kaydeder.
   @UpdateDateColumn()
   updated_at: Date;

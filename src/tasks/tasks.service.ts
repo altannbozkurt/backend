@@ -15,7 +15,8 @@ import { BadgesService } from '../badges/badges.service'; // <-- YENİ İMPORT
 
 // Rozet ID'lerini sabit olarak tanımlayalım
 const BADGE_FIRST_MATCH = 'FIRST_MATCH_COMPLETED';
-const BADGE_MVP_BRONZE = 'MVP_BRONZE';
+//const BADGE_MVP_BRONZE = 'MVP_BRONZE';
+
 // ... diğer rozet ID'leri
 
 
@@ -41,7 +42,7 @@ export class TasksService {
   /**
    * HER 10 DAKİKADA BİR ÇALIŞAN ZAMANLANMIŞ GÖREV
    */
-  @Cron(CronExpression.EVERY_10_MINUTES)
+  @Cron(CronExpression.EVERY_5_MINUTES)
   async handleProcessFinishedMatches() {
     this.logger.log('Starting to process finished matches...');
 
@@ -103,6 +104,36 @@ export class TasksService {
 
     const profileMap = new Map(profiles.map((p) => [p.user_id, p]));
 
+
+    // --- YENİ EKLENEN MVP HESAPLAMA MANTIĞI (Döngüden Önce) ---
+
+    // 1. Tüm oyları bir haritada (Map) topla (voted_user_id -> vote_count)
+    const mvpVoteCounts = new Map<string, number>();
+    for (const vote of mvpVotes) {
+      const userId = vote.voted_user_id;
+      // Haritadaki mevcut sayıyı al (yoksa 0) ve 1 ekle
+      mvpVoteCounts.set(userId, (mvpVoteCounts.get(userId) || 0) + 1);
+    }
+
+    // 2. En yüksek oy sayısını bul
+    let maxVotes = 0;
+    if (mvpVoteCounts.size > 0) {
+      // Map'in 'values' (oy sayıları) üzerinden en büyüğünü bul
+      maxVotes = Math.max(...Array.from(mvpVoteCounts.values()));
+    }
+
+    // 3. Kazananları (veya berabere kalanları) bul (Eğer en az 1 oy varsa)
+    const mvpWinners: string[] = [];
+    if (maxVotes > 0) {
+      for (const [userId, count] of mvpVoteCounts.entries()) {
+        if (count === maxVotes) {
+          mvpWinners.push(userId); // En çok oyu alanları listeye ekle
+        }
+      }
+    }
+    // --- YENİ MVP MANTIĞI BİTTİ ---
+
+
     // D. Puanları Hesapla ve Güncelle (Transaction içinde)
     const queryRunner = this.dataSource.createQueryRunner();
     await queryRunner.connect();
@@ -127,11 +158,21 @@ export class TasksService {
         profile.stat_dri       = Number(profile.stat_dri);
         profile.stat_def       = Number(profile.stat_def);
         profile.stat_phy       = Number(profile.stat_phy);
+        profile.fair_play_score = Number(profile.fair_play_score); // EKLENDİ
+
+        // YENİ Kümülatif sayaçları da sayıya çevir
+        profile.total_matches_played = Number(profile.total_matches_played);
+        profile.total_mvps_won = Number(profile.total_mvps_won);
+        profile.total_tags_received = Number(profile.total_tags_received);
+        // --- BİTTİ: Sayısal alanları çevirme ---
 
         // --- D1. Güvenilirlik Puanı Güncellemesi ---
         if (participant.attended === true) {
           // Oyuncu geldiyse: Güvenilirliğini artır (veya sabit tut)
           profile.participation_rate = Math.min(100, profile.participation_rate + 1);
+
+          // YENİ: Toplam maçı artır
+          profile.total_matches_played += 1;
 
           // --- ROZET MANTIĞI: İLK MAÇ ---
           // Katılımcı maça 'geldi' ise, ona 'İLK MAÇ' rozetini ver
@@ -145,29 +186,66 @@ export class TasksService {
         }
 
         // --- D2. İstatistik (Stat) Güncellemesi ---
-        // Kaç MVP oyu aldı?
-        const receivedMvpVotes = mvpVotes.filter(
-          (v) => v.voted_user_id === participant.user_id,
-        ).length;
+        
+        // (Eski 'receivedMvpVotes' satırı kaldırıldı)
 
         // Kaç etiket aldı?
         const receivedTags = tagVotes.filter(
           (v) => v.tagged_user_id === participant.user_id,
         );
         
-        // Basit bir puanlama algoritması:
-        // Her MVP oyu, tüm statlara +0.5 ekler
-        profile.overall_rating += (receivedMvpVotes * 0.5);
-        
-        // Her etiket, ilgili stata +0.2 ekler
-        for (const tag of receivedTags) {
-          if (tag.tag_id === 'FINISHING') profile.stat_sho += 0.2;
-          if (tag.tag_id === 'DEFENDING') profile.stat_def += 0.2;
-          if (tag.tag_id === 'PASSING') profile.stat_pas += 0.2;
-          // ... diğer tüm etiketler için ...
+        // --- DEĞİŞTİRİLEN PUANLAMA ALGORİTMASI ---
+
+        // SADECE GERÇEK MVP KAZANANI (veya kazananları) bonusu alır
+        if (mvpWinners.includes(participant.user_id)) {
+            // Bu kişi kazananlar listesindeyse, bonusu ver
+            const mvpBonus = 0.5; // (Tüm statlara 0.5 bonus)
+            profile.stat_pac += mvpBonus;
+            profile.stat_sho += mvpBonus;
+            profile.stat_pas += mvpBonus;
+            profile.stat_dri += mvpBonus;
+            profile.stat_def += mvpBonus;
+            profile.stat_phy += mvpBonus;
+
+            // YENİ: Toplam MVP kazançını artır
+            profile.total_mvps_won += 1;
+            
+            // --- ROZET MANTIĞI: MVP ---
+            // Rozeti de SADECE kazananlar almalı
+            //await this.badgesService.awardBadge(participant.user_id, BADGE_MVP_BRONZE);
         }
 
-        // Genel reytingi, statların ortalaması olarak yeniden hesapla (daha doğru olur)
+        if(receivedTags.length > 0){
+            // YENİ: Toplam etiket sayısını artır
+            profile.total_tags_received += receivedTags.length;
+        }
+        
+        
+        // Her etiket, ilgili stata +0.2 ekler (TÜM EKLENTİLER DAHİL)
+        const tagBonus = 0.2; 
+        for (const tag of receivedTags) {
+          if (tag.tag_id === 'FINISHING') profile.stat_sho += tagBonus;
+          if (tag.tag_id === 'DEFENDING') profile.stat_def += tagBonus;
+          if (tag.tag_id === 'PASSING') profile.stat_pas += tagBonus;
+          
+          // --- EKSİK OLAN VE EKLENEN KISIM ---
+          if (tag.tag_id === 'DRIBBLING') {
+            profile.stat_dri += tagBonus;
+          }
+          if (tag.tag_id === 'TEAM_PLAYER') {
+            // "Takım Motoru"nu fiziksel dayanaklılık (stat_phy) olarak yorumlayabiliriz
+            profile.stat_phy += tagBonus;
+          }
+          if (tag.tag_id === 'FAIR_PLAY') {
+            // Ayrı bir stat olan fair_play_score'u artıralım (örn: +1 puan)
+            profile.fair_play_score = Math.min(100, profile.fair_play_score + 1.0);
+          }
+          // --- EKSİK KISIM BİTTİ ---
+        }
+
+        // (Eski 'profile.overall_rating += ...' satırı kaldırıldı)
+
+        // Genel reytingi, statların ortalaması olarak yeniden hesapla (artık MVP bonusu da dahil)
         profile.overall_rating = 
           (profile.stat_pac + profile.stat_sho + profile.stat_pas + 
            profile.stat_dri + profile.stat_def + profile.stat_phy) / 6;
@@ -176,21 +254,19 @@ export class TasksService {
         if (profile.overall_rating >= 75) profile.card_type = 'gold';
         else if (profile.overall_rating >= 65) profile.card_type = 'silver';
 
-        // --- ROZET MANTIĞI: MVP ---
-        // Eğer bu maçta MVP oyu aldıysa, MVP ile ilgili rozetleri kontrol et
-        if (receivedMvpVotes > 0) {
-           // TODO: Daha karmaşık bir mantık eklenebilir
-           // Örn: Toplam MVP sayısını say ve 10'a ulaştıysa 'MVP_BRONZE' ver
-           // await this.badgesService.checkAndAwardMvpBadges(participant.user_id);
-           
-           // Şimdilik test için, 1 MVP oyu alırsa 'MVP_BRONZE' verelim (eğer varsa)
-           await this.badgesService.awardBadge(participant.user_id, BADGE_MVP_BRONZE);
-        }
-        // --- ROZET MANTIĞI BİTTİ ---
+        // --- ROZET MANTIĞI (MVP) ---
+        // (Bu blok yukarıdaki 'if (mvpWinners.includes...)' içine taşındı)
 
 
         // Güncellenmiş profili transaction ile kaydet
         await queryRunner.manager.save(profile);
+
+        // --- D3. YENİ KÜMÜLATİF ROZET KONTROLÜ ---
+        // Profil kaydedildikten SONRA, güncel profile ile rozet servisini çağır
+        await this.badgesService.checkAndAwardCumulativeBadges(
+          participant.user_id,
+          profile,
+        );
       }
 
       // E. Maçın statüsünü 'completed' olarak işaretle
